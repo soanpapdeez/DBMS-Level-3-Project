@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: ticket
+      POSTGRES_PASSWORD: ticket
+      POSTGRES_DB: ticket_engine
+    ports: ["5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db:/db
+  mongo:
+    image: mongo:8
+    ports: ["27017:27017"]
+    volumes:
+      - mongodata:/data/db
+volumes:
+  pgdata:
+  mongodata:
