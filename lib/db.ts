@@ -23,3 +23,12 @@ export const pool =
 if (process.env.NODE_ENV !== "production") {
   globalForPg.pgPool = pool;
 }
+
+export async function query<
+  T extends import("pg").QueryResultRow = import("pg").QueryResultRow
+>(
+  text: string,
+  params: unknown[] = []
+) {
+  return pool.query<T>(text, params);
+}
