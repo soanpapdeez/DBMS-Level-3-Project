@@ -1,6 +1,12 @@
 
 import { Pool } from "pg";
 
+const connectionString = process.env.DATABASE_URL;
+
+if (!connectionString) {
+  throw new Error("DATABASE_URL is not configured");
+}
+
 const globalForPg = globalThis as typeof globalThis & {
   pgPool?: Pool;
 };
@@ -8,7 +14,7 @@ const globalForPg = globalThis as typeof globalThis & {
 export const pool =
   globalForPg.pgPool ??
   new Pool({
-    connectionString: process.env.DATABASE_URL,
+    connectionString,
     max: 10,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 5000,
@@ -18,7 +24,9 @@ if (process.env.NODE_ENV !== "production") {
   globalForPg.pgPool = pool;
 }
 
-export async function query<T extends import("pg").QueryResultRow = import("pg").QueryResultRow>(
+export async function query<
+  T extends import("pg").QueryResultRow = import("pg").QueryResultRow
+>(
   text: string,
   params: unknown[] = []
 ) {
