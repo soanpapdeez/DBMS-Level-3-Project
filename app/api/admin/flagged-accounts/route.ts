@@ -1,10 +1,27 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { query } from "@/lib/db";
+import { getSession } from "@/lib/session";
 
-// GET: View flagged accounts
+// GET: View flagged accounts (admin only)
 export async function GET() {
   try {
+    const session = await getSession();
+
+    if (!session) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 }
+      );
+    }
+
+    if (session.role !== "ADMIN") {
+      return NextResponse.json(
+        { error: "Admin access required" },
+        { status: 403 }
+      );
+    }
+
     const result = await query(
       `SELECT * FROM v_flagged_users
        ORDER BY flagged_at DESC`
@@ -23,18 +40,33 @@ export async function GET() {
   }
 }
 
-// PATCH: Clear a flag or ban an account
+// PATCH: Clear a flag or ban an account (admin only)
 export async function PATCH(request: NextRequest) {
   try {
-    const { flagId, action, adminId } = await request.json();
+    const session = await getSession();
+
+    if (!session) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 }
+      );
+    }
+
+    if (session.role !== "ADMIN") {
+      return NextResponse.json(
+        { error: "Admin access required" },
+        { status: 403 }
+      );
+    }
+
+    const { flagId, action } = await request.json();
 
     if (
       !Number.isInteger(Number(flagId)) ||
-      !Number.isInteger(Number(adminId)) ||
       !["CLEARED", "BANNED"].includes(action)
     ) {
       return NextResponse.json(
-        { error: "Invalid flagId, adminId or action" },
+        { error: "Invalid flagId or action" },
         { status: 400 }
       );
     }
@@ -47,7 +79,7 @@ export async function PATCH(request: NextRequest) {
        WHERE flag_id = $3
          AND status = 'OPEN'
        RETURNING user_id`,
-      [action, Number(adminId), Number(flagId)]
+      [action, session.userId, Number(flagId)]
     );
 
     if (result.rowCount === 0) {

@@ -1,5 +1,6 @@
 
 import { NextRequest, NextResponse } from "next/server";
+import { getSession } from "@/lib/session";
 import {
   logAttempt,
   getRiskScore,
@@ -8,35 +9,54 @@ import {
 
 export async function POST(request: NextRequest) {
   try {
+    // Authenticate the user.
+    const session = await getSession();
+
+    if (!session) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 }
+      );
+    }
+
     const body = await request.json();
 
-    const { userId, eventId, ip, deviceFingerprint, outcome } = body;
+    const { eventId, deviceFingerprint } = body;
 
     if (
-      !userId ||
-      !eventId ||
-      !ip ||
-      !deviceFingerprint ||
-      !outcome
+      (typeof eventId !== "string" &&
+        !Number.isInteger(eventId)) ||
+      !String(eventId).trim() ||
+      typeof deviceFingerprint !== "string" ||
+      !deviceFingerprint.trim()
     ) {
       return NextResponse.json(
-        { error: "Missing required fields" },
+        { error: "Invalid event ID or device fingerprint" },
         { status: 400 }
       );
     }
 
+    // Derive IP from request headers, not the body.
+    const forwardedFor = request.headers.get("x-forwarded-for");
+    const ip =
+      forwardedFor?.split(",")[0]?.trim() ||
+      request.headers.get("x-real-ip") ||
+      "unknown";
+
+    const userId = String(session.userId);
+
     await logAttempt({
-      userId: String(userId),
+      userId,
       eventId: String(eventId),
-      ip: String(ip),
-      deviceFingerprint: String(deviceFingerprint),
-      outcome: String(outcome),
+      ip,
+      deviceFingerprint: deviceFingerprint.trim(),
+      outcome: "pending",
     });
 
     const riskScore = await getRiskScore({
-      userId: String(userId),
-      ip: String(ip),
-      deviceFingerprint: String(deviceFingerprint),
+      userId,
+      ip,
+      deviceFingerprint: deviceFingerprint.trim(),
     });
 
     const action = getRiskAction(riskScore);
@@ -50,7 +70,7 @@ export async function POST(request: NextRequest) {
           action === "BLOCK"
             ? "Suspicious activity detected. Purchase blocked."
             : action === "REVIEW"
-              ? "Purchase allowed but flagged for review."
+              ? "Purchase requires admin review."
               : "Purchase attempt recorded.",
       },
       { status: action === "BLOCK" ? 403 : 200 }
@@ -59,8 +79,8 @@ export async function POST(request: NextRequest) {
     console.error("Anti-scalping API error:", error);
 
     return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
+      { error: "Anti-scalping service unavailable" },
+      { status: 503 }
     );
   }
 }
