@@ -24,6 +24,14 @@ type Seat = {
 
 type PaymentMethod = "UPI" | "CARD" | "NETBANKING";
 
+type BookingResult = {
+  bookingId?: number;
+  total?: number;
+  bookingPending?: boolean;
+  riskScore?: number;
+  action?: string;
+};
+
 function CheckoutContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -43,10 +51,7 @@ function CheckoutContent() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
-  const [booking, setBooking] = useState<{
-    bookingId: number;
-    total: number;
-  } | null>(null);
+  const [booking, setBooking] = useState<BookingResult | null>(null);
 
   useEffect(() => {
     async function loadCheckout() {
@@ -135,9 +140,14 @@ function CheckoutContent() {
         throw new Error(data.error || "Payment or booking failed.");
       }
 
+      // HTTP 202 means the booking is awaiting admin review.
+      // HTTP 201 means the booking was successfully completed.
       setBooking({
         bookingId: data.bookingId,
         total: data.total,
+        bookingPending: data.bookingPending === true || response.status === 202,
+        riskScore: data.riskScore,
+        action: data.action,
       });
     } catch (err) {
       setError(
@@ -157,30 +167,48 @@ function CheckoutContent() {
   }
 
   if (booking) {
+    const isPendingReview = booking.bookingPending === true;
+
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#08080f] px-5 py-12 text-white">
-        <section className="w-full max-w-lg rounded-3xl border border-emerald-500/20 bg-[#141421] p-8 text-center shadow-2xl">
-          <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-emerald-500/15 text-4xl text-emerald-400">
-            ✓
+        <section className="w-full max-w-lg rounded-3xl border border-white/10 bg-[#141421] p-8 text-center shadow-2xl">
+          <div
+            className={`mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full text-4xl ${
+              isPendingReview
+                ? "bg-amber-500/15 text-amber-400"
+                : "bg-emerald-500/15 text-emerald-400"
+            }`}
+          >
+            {isPendingReview ? "⌛" : "✓"}
           </div>
 
-          <p className="mb-3 text-sm font-bold uppercase tracking-widest text-emerald-400">
-            Booking confirmed
+          <p
+            className={`mb-3 text-sm font-bold uppercase tracking-widest ${
+              isPendingReview ? "text-amber-400" : "text-emerald-400"
+            }`}
+          >
+            {isPendingReview ? "Booking under review" : "Booking confirmed"}
           </p>
 
           <h1 className="text-3xl font-extrabold">
-            You're going to the event!
+            {isPendingReview
+              ? "Your request is being reviewed"
+              : "You're going to the event!"}
           </h1>
 
           <p className="mt-3 text-slate-400">
-            Your payment was successful and your seats have been booked.
+            {isPendingReview
+              ? "Your booking request has been submitted and is awaiting admin approval. Your seats have not been permanently booked."
+              : "Your payment was successful and your seats have been booked."}
           </p>
 
           <div className="my-8 rounded-2xl border border-white/10 bg-[#0d0d18] p-5 text-left">
-            <div className="flex justify-between gap-4">
-              <span className="text-sm text-slate-400">Booking ID</span>
-              <span className="font-bold">#{booking.bookingId}</span>
-            </div>
+            {!isPendingReview && booking.bookingId !== undefined && (
+              <div className="flex justify-between gap-4">
+                <span className="text-sm text-slate-400">Booking ID</span>
+                <span className="font-bold">#{booking.bookingId}</span>
+              </div>
+            )}
 
             <div className="mt-4 flex justify-between gap-4">
               <span className="text-sm text-slate-400">Event</span>
@@ -192,16 +220,31 @@ function CheckoutContent() {
             <div className="mt-4 flex justify-between gap-4">
               <span className="text-sm text-slate-400">Seats</span>
               <span className="font-semibold">
-                {seats.map((seat) => `${seat.rowLabel}${seat.seatNumber}`).join(", ")}
+                {seats
+                  .map((seat) => `${seat.rowLabel}${seat.seatNumber}`)
+                  .join(", ")}
               </span>
             </div>
 
-            <div className="mt-4 flex justify-between gap-4 border-t border-white/10 pt-4">
-              <span className="text-sm text-slate-400">Amount paid</span>
-              <span className="text-xl font-extrabold text-emerald-400">
-                ₹{booking.total.toLocaleString("en-IN")}
-              </span>
-            </div>
+            {isPendingReview ? (
+              <div className="mt-4 border-t border-white/10 pt-4">
+                <p className="font-bold text-amber-400">
+                  Pending Admin Approval
+                </p>
+                {booking.riskScore !== undefined && (
+                  <p className="mt-2 text-sm text-slate-400">
+                    Risk Score: {booking.riskScore}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div className="mt-4 flex justify-between gap-4 border-t border-white/10 pt-4">
+                <span className="text-sm text-slate-400">Amount paid</span>
+                <span className="text-xl font-extrabold text-emerald-400">
+                  ₹{Number(booking.total ?? 0).toLocaleString("en-IN")}
+                </span>
+              </div>
+            )}
           </div>
 
           <Link
@@ -357,7 +400,8 @@ function CheckoutContent() {
                   📍 {event.venue}, {event.city}
                 </p>
                 <p className="mt-2 text-sm text-slate-400">
-                  🗓️ {new Date(event.startsAt).toLocaleDateString("en-IN", {
+                  🗓️{" "}
+                  {new Date(event.startsAt).toLocaleDateString("en-IN", {
                     day: "numeric",
                     month: "long",
                     year: "numeric",
@@ -400,7 +444,8 @@ function CheckoutContent() {
 
             {expiresAt && (
               <p className="mt-4 text-xs leading-5 text-amber-400">
-                Seat hold expires: {new Date(expiresAt).toLocaleTimeString("en-IN", {
+                Seat hold expires:{" "}
+                {new Date(expiresAt).toLocaleTimeString("en-IN", {
                   hour: "numeric",
                   minute: "2-digit",
                 })}
@@ -419,10 +464,16 @@ function CheckoutContent() {
             <button
               type="button"
               onClick={handlePayment}
-              disabled={submitting || seats.length !== seatIds.length || seats.length === 0}
+              disabled={
+                submitting ||
+                seats.length !== seatIds.length ||
+                seats.length === 0
+              }
               className="mt-7 w-full rounded-xl bg-gradient-to-r from-purple-600 to-pink-500 py-3.5 font-bold transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {submitting ? "Processing..." : `Pay ₹${total.toLocaleString("en-IN")}`}
+              {submitting
+                ? "Processing..."
+                : `Pay ₹${total.toLocaleString("en-IN")}`}
             </button>
 
             <p className="mt-4 text-center text-xs leading-5 text-slate-500">

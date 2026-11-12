@@ -1,4 +1,5 @@
 
+import { ObjectId } from "mongodb";
 import { getMongoDb } from "./mongo";
 
 export interface AttemptInput {
@@ -9,17 +10,11 @@ export interface AttemptInput {
   outcome: string;
 }
 
-interface PurchaseAttempt {
-  userId: string;
-  eventId: string;
-  ip: string;
-  deviceFingerprint: string;
+interface PurchaseAttempt extends AttemptInput {
   timestamp: Date;
   attemptsPerMinute: number;
-  outcome: string;
 }
 
-// Create indexes only once per server process.
 let indexesPromise: Promise<void> | null = null;
 
 export async function ensureAntiScalpingIndexes(): Promise<void> {
@@ -44,14 +39,9 @@ export async function ensureAntiScalpingIndexes(): Promise<void> {
   await indexesPromise;
 }
 
-// Record every purchase attempt in MongoDB.
-export async function logAttempt({
-  userId,
-  eventId,
-  ip,
-  deviceFingerprint,
-  outcome,
-}: AttemptInput): Promise<void> {
+export async function logAttempt(
+  input: AttemptInput
+): Promise<string> {
   await ensureAntiScalpingIndexes();
 
   const db = await getMongoDb();
@@ -61,22 +51,39 @@ export async function logAttempt({
   const oneMinuteAgo = new Date(now.getTime() - 60_000);
 
   const attempts = await collection.countDocuments({
-    userId,
+    userId: input.userId,
     timestamp: { $gte: oneMinuteAgo },
   });
 
-  await collection.insertOne({
-    userId,
-    eventId,
-    ip,
-    deviceFingerprint,
+  const result = await collection.insertOne({
+    ...input,
     timestamp: now,
     attemptsPerMinute: attempts + 1,
-    outcome,
   });
+
+  return result.insertedId.toString();
 }
 
-// Calculate the user's fraud risk score.
+export async function updateAttemptOutcome(
+  attemptId: string,
+  outcome: string
+): Promise<void> {
+  if (!ObjectId.isValid(attemptId)) {
+    throw new Error("Invalid purchase attempt ID");
+  }
+
+  const db = await getMongoDb();
+
+  const result = await db.collection("purchase_attempts").updateOne(
+    { _id: new ObjectId(attemptId) },
+    { $set: { outcome, updatedAt: new Date() } }
+  );
+
+  if (result.matchedCount !== 1) {
+    throw new Error("Purchase attempt record not found");
+  }
+}
+
 export async function getRiskScore({
   userId,
   ip,
@@ -92,12 +99,9 @@ export async function getRiskScore({
   const collection = db.collection("purchase_attempts");
 
   const now = new Date();
-
   const oneMinuteAgo = new Date(now.getTime() - 60_000);
   const tenMinutesAgo = new Date(now.getTime() - 10 * 60_000);
-  const twentyFourHoursAgo = new Date(
-    now.getTime() - 24 * 60 * 60_000
-  );
+  const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60_000);
 
   const [
     recentAttempts,
@@ -109,17 +113,14 @@ export async function getRiskScore({
       userId,
       timestamp: { $gte: oneMinuteAgo },
     }),
-
     collection.distinct("userId", {
       deviceFingerprint,
       timestamp: { $gte: twentyFourHoursAgo },
     }),
-
     collection.distinct("userId", {
       ip,
       timestamp: { $gte: twentyFourHoursAgo },
     }),
-
     collection.countDocuments({
       userId,
       outcome: "rejected",
@@ -137,7 +138,6 @@ export async function getRiskScore({
   return Math.min(score, 100);
 }
 
-// Decide what action should be taken based on the risk score.
 export function getRiskAction(
   score: number
 ): "ALLOW" | "REVIEW" | "BLOCK" {
@@ -147,9 +147,10 @@ export function getRiskAction(
 }
 
 export async function getSuspiciousSources() {
+  await ensureAntiScalpingIndexes();
+
   const db = await getMongoDb();
   const collection = db.collection("purchase_attempts");
-
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
   const [suspiciousDevices, suspiciousIPs] = await Promise.all([
